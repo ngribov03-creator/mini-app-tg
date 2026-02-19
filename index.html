@@ -136,32 +136,35 @@
     return new Promise(r => { savePromiseResolve = r; });
   }
 
-  async function pumpSaves(){
-    if (saving) return;
-    saving = true;
+async function pumpSaves(){
+  if (saving) return;
+  saving = true;
 
-    try{
-      while (pending.size > 0){
-        const [dateISO, snapshot] = pending.entries().next().value;
-        pending.delete(dateISO);
+  try{
+    while (pending.size > 0){
+      const [dateISO, snapshot] = pending.entries().next().value;
+      pending.delete(dateISO);
 
-        if (telegramId === "guest"){
-          localStorage.setItem("planner_guest_" + dateISO, JSON.stringify(snapshot));
-          continue;
-        }
-        await api("save", dateISO, snapshot);
+      if (telegramId === "guest"){
+        localStorage.setItem("planner_guest_" + dateISO, JSON.stringify(snapshot));
+        continue;
       }
-    } catch(e){
-      setError(e.message || "Ошибка сохранения");
-    } finally {
-      saving = false;
-      if (savePromiseResolve && pending.size === 0){
-        const r = savePromiseResolve;
-        savePromiseResolve = null;
-        r();
-      }
+
+      // ИСПРАВЛЕНО: было "save"
+      await api("set", dateISO, snapshot);
+    }
+  } catch(e){
+    setError(e.message || "Ошибка сохранения");
+  } finally {
+    saving = false;
+    if (savePromiseResolve && pending.size === 0){
+      const r = savePromiseResolve;
+      savePromiseResolve = null;
+      r();
     }
   }
+}
+
 
   function requestSave(dateObj){
     const dateISO = fmtISO(dateObj);
