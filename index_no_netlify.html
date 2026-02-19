@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Planner</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root{
+      --bg:#0b0f14; --card:#111826; --txt:#e6edf3; --mut:#9aa4b2; --acc:#3b82f6; --danger:#ef4444;
+    }
+    *{ box-sizing:border-box; }
+    body{ margin:0; font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Inter,Arial,sans-serif; background:var(--bg); color:var(--txt); }
+    .wrap{ padding:14px; max-width:860px; margin:0 auto; }
+    .top{ display:flex; gap:12px; align-items:center; justify-content:space-between; margin-bottom:12px; }
+    .pill{ background:var(--card); border:1px solid rgba(255,255,255,.08); padding:10px 12px; border-radius:14px; font-size:14px; }
+    .btn{ background:var(--acc); border:none; color:white; padding:10px 12px; border-radius:12px; font-weight:700; cursor:pointer; }
+    .btn:disabled{ opacity:.55; cursor:not-allowed; }
+    .ghost{ background:transparent; border:1px solid rgba(255,255,255,.14); color:var(--txt); }
+    .panel{ margin-top:12px; background:var(--card); border:1px solid rgba(255,255,255,.08); border-radius:16px; padding:12px; }
+
+    .calHead{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin:10px 0 8px; flex-wrap:wrap; }
+    .monthTitle{ font-weight:800; font-size:16px; }
+    .calNav{ display:flex; gap:8px; flex-wrap:wrap; }
+
+    .grid{ display:grid; grid-template-columns:repeat(7, 1fr); gap:8px; }
+    .dow{ color:var(--mut); font-size:12px; text-align:center; padding:6px 0; user-select:none; }
+    .day{ background:var(--card); border:1px solid rgba(255,255,255,.08); border-radius:14px; padding:10px; min-height:64px; cursor:pointer; display:flex; flex-direction:column; gap:6px; }
+    .day.muted{ opacity:.45; }
+    .day.selected{ outline:2px solid rgba(59,130,246,.65); }
+    .n{ font-weight:800; display:flex; justify-content:space-between; }
+    .tag{ font-size:12px; color:var(--mut); }
+
+    .h{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
+    .hTitle{ font-weight:900; }
+    .progress{ color:var(--mut); font-size:13px; }
+
+    .row{ display:flex; gap:8px; margin-top:10px; }
+    input{ flex:1; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12); border-radius:12px; padding:10px 12px; color:var(--txt); outline:none; }
+    .tasks{ margin-top:10px; display:flex; flex-direction:column; gap:8px; }
+    .task{ display:flex; align-items:center; justify-content:space-between; gap:10px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.08); border-radius:14px; padding:10px 12px; }
+    .left{ display:flex; gap:10px; align-items:flex-start; }
+    .cb{ width:18px; height:18px; margin-top:2px; }
+    .ttext.done{ text-decoration:line-through; color:var(--mut); }
+    .del{ background:transparent; border:none; color:rgba(255,255,255,.65); cursor:pointer; font-size:18px; line-height:1; }
+    .hint{ margin-top:10px; color:var(--mut); font-size:12px; }
+    .danger{ color: var(--danger); }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div class="pill" id="userPill">Пользователь: Гость</div>
+      <div style="display:flex; gap:8px;">
+        <button class="btn ghost" id="prevDayBtn">←</button>
+        <button class="btn ghost" id="nextDayBtn">→</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="calHead">
+        <div class="monthTitle" id="monthTitle">—</div>
+        <div class="calNav">
+          <button class="btn ghost" id="prevMonthBtn">← месяц</button>
+          <button class="btn ghost" id="nextMonthBtn">месяц →</button>
+        </div>
+      </div>
+      <div class="grid" id="dowRow"></div>
+      <div class="grid" id="calGrid"></div>
+    </div>
+
+    <div class="panel">
+      <div class="h">
+        <div>
+          <div class="hTitle" id="dayTitle">Выбери день</div>
+          <div class="progress" id="progress">—</div>
+        </div>
+        <button class="btn ghost" id="rollBtn">Перенос невыполненного → завтра</button>
+      </div>
+
+      <div class="row">
+        <input id="taskInput" placeholder="Новое дело…" />
+        <button class="btn" id="addBtn">Добавить</button>
+      </div>
+
+      <div class="tasks" id="tasks"></div>
+
+      <div class="hint">
+        Совет: отметь выполненное галочкой. “Перенос” переносит только невыполненные.
+        <span class="danger" id="err" style="display:none;"></span>
+      </div>
+    </div>
+  </div>
+
+<script>
+  // ===== Telegram =====
+  const tg = window.Telegram?.WebApp;
+  if (tg) tg.ready();
+
+  const initData = tg?.initData || "";
+  const user = tg?.initDataUnsafe?.user || null;
+  const telegramId = user?.id ? String(user.id) : "guest";
+  const userName = user ? (user.username ? "@"+user.username : [user.first_name, user.last_name].filter(Boolean).join(" ")) : "Гость";
+  document.getElementById("userPill").textContent = "Пользователь: " + userName;
+
+  // ===== State =====
+  const LS_KEY = "planner_selected_date_v1";
+  const DOW = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
+
+  let selectedDate = loadSelectedDate() || todayLocal();
+  let currentMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+  let tasks = [];
+
+  // ===== Robust Save Queue (date + snapshot, coalescing) =====
+  // Храним "последний снимок" на дату. Сохранения идут строго по одному.
+  const pending = new Map(); // dateISO -> snapshot(array)
+  let saving = false;
+  let savePromiseResolve = null;
+
+  function deepClone(x){
+    // structuredClone может быть не везде; JSON ок для наших объектов
+    return JSON.parse(JSON.stringify(x));
+  }
+
+  function setError(msg){
+    const el = document.getElementById("err");
+    if (!msg){ el.style.display="none"; el.textContent=""; return; }
+    el.style.display="inline"; el.textContent=" — " + msg;
+  }
+
+  function getSaveBarrier(){
+    // промис, который резолвится, когда очередь пуста и ничего не сохраняется
+    if (!saving && pending.size === 0) return Promise.resolve();
+    return new Promise(r => { savePromiseResolve = r; });
+  }
+
+  async function pumpSaves(){
+    if (saving) return;
+    saving = true;
+
+    try{
+      while (pending.size > 0){
+        const [dateISO, snapshot] = pending.entries().next().value;
+        pending.delete(dateISO);
+
+        if (telegramId === "guest"){
+          localStorage.setItem("planner_guest_" + dateISO, JSON.stringify(snapshot));
+          continue;
+        }
+        await api("save", dateISO, snapshot);
+      }
+    } catch(e){
+      setError(e.message || "Ошибка сохранения");
+    } finally {
+      saving = false;
+      if (savePromiseResolve && pending.size === 0){
+        const r = savePromiseResolve;
+        savePromiseResolve = null;
+        r();
+      }
+    }
+  }
+
+  function requestSave(dateObj){
+    const dateISO = fmtISO(dateObj);
+    // фикс: сохраняем «чистый» снимок, чтобы не было затираний/сбросов при быстрых действиях
+    const snapshot = tasks.map(t => ({
+      text: t.text,
+      done: !!t.done
+    }));
+    pending.set(dateISO, snapshot);            // коалесим: на дату всегда только последний снимок
+    pumpSaves();
+  }
+
+  // ===== API (Supabase напрямую, без Netlify) =====
+  const SUPABASE_URL = "PASTE_SUPABASE_URL_HERE";
+  const SUPABASE_ANON_KEY = "PASTE_SUPABASE_ANON_KEY_HERE";
+  const supa = (window.supabase && window.supabase.createClient)
+    ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+    : null;
+
+  async function api(action, dateISO, tasksArr){
+    if (!supa) throw new Error("Supabase client не загрузился (проверь подключение supabase-js)");
+    if (!SUPABASE_URL.startsWith("http")) throw new Error("Вставь SUPABASE_URL в index.html");
+    if (SUPABASE_ANON_KEY.startsWith("PASTE_")) throw new Error("Вставь SUPABASE_ANON_KEY в index.html");
+
+    if (action === "get") {
+      const { data, error } = await supa
+        .from("planner_tasks")
+        .select("tasks")
+        .eq("telegram_id", telegramId)
+        .eq("date", dateISO)
+        .maybeSingle();
+      if (error) throw error;
+      return { tasks: data?.tasks ?? [] };
+    }
+
+    if (action === "set") {
+      const payload = {
+        telegram_id: telegramId,
+        date: dateISO,
+        tasks: Array.isArray(tasksArr) ? tasksArr : [],
+        updated_at: new Date().toISOString()
+      };
+      const { error } = await supa
+        .from("planner_tasks")
+        .upsert(payload, { onConflict: "telegram_id,date" });
+      if (error) throw error;
+      return { ok: true };
+    }
+
+    throw new Error("Unknown action: " + action);
+  }
+  async function loadTasksForDate(d){
+    setError("");
+    const dateISO = fmtISO(d);
+
+    if (telegramId === "guest"){
+      tasks = JSON.parse(localStorage.getItem("planner_guest_" + dateISO) || "[]");
+      renderTasks();
+      return;
+    }
+
+    try{
+      const data = await api("get", dateISO);
+      tasks = Array.isArray(data.tasks)
+        ? data.tasks.map(t => ({ text: t.text, done: !!t.done }))
+        : [];
+    }catch(e){
+      setError(e.message || "Ошибка загрузки");
+      tasks = [];
+    }finally{
+      renderTasks();
+    }
+  }
+
+  // ===== Helpers =====
+  function pad(n){ return String(n).padStart(2,"0"); }
+  function fmtISO(d){ return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; }
+  function parseISO(s){ const [y,m,dd] = s.split("-").map(Number); return new Date(y, (m-1), dd); }
+  function todayLocal(){ const now=new Date(); return new Date(now.getFullYear(), now.getMonth(), now.getDate()); }
+  function addDays(date, delta){ const d=new Date(date.getFullYear(), date.getMonth(), date.getDate()); d.setDate(d.getDate()+delta); return d; }
+  function monthName(d){ return d.toLocaleDateString("ru-RU", { month:"long", year:"numeric" }); }
+  function dayTitle(d){ return d.toLocaleDateString("ru-RU", { weekday:"long", day:"2-digit", month:"long" }); }
+  function saveSelectedDate(d){ localStorage.setItem(LS_KEY, fmtISO(d)); }
+  function loadSelectedDate(){ const s=localStorage.getItem(LS_KEY); if(!s) return null; try{return parseISO(s);}catch{return null;} }
+  function capitalize(s){ return s ? s.charAt(0).toUpperCase()+s.slice(1) : s; }
+
+  // ===== Calendar UI =====
+  function renderDow(){
+    const row = document.getElementById("dowRow");
+    row.innerHTML = "";
+    for (const name of DOW){
+      const div = document.createElement("div");
+      div.className = "dow";
+      div.textContent = name;
+      row.appendChild(div);
+    }
+  }
+
+  function renderCalendar(){
+    document.getElementById("monthTitle").textContent = capitalize(monthName(currentMonth));
+    const grid = document.getElementById("calGrid");
+    grid.innerHTML = "";
+
+    const first = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
+    let jsDow = first.getDay();                 // 0=Sun..6=Sat
+    let offset = (jsDow === 0) ? 6 : (jsDow - 1); // Пн=0
+
+    const start = new Date(first);
+    start.setDate(first.getDate() - offset);
+
+    for (let i=0;i<42;i++){
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+
+      const cell = document.createElement("div");
+      cell.className = "day";
+      if (d.getMonth() !== currentMonth.getMonth()) cell.classList.add("muted");
+      if (fmtISO(d) === fmtISO(selectedDate)) cell.classList.add("selected");
+
+      const n = document.createElement("div");
+      n.className = "n";
+      n.innerHTML = `<span>${d.getDate()}</span><span class="tag">${(fmtISO(d)===fmtISO(todayLocal())) ? "сегодня" : ""}</span>`;
+      cell.appendChild(n);
+
+      cell.addEventListener("click", () => { selectDate(d); });
+      grid.appendChild(cell);
+    }
+  }
+
+  // ===== Tasks UI =====
+  function renderTasks(){
+    document.getElementById("dayTitle").textContent = dayTitle(selectedDate);
+    const done = tasks.filter(t=>t.done).length;
+    const total = tasks.length;
+    document.getElementById("progress").textContent = total ? `Выполнено: ${done}/${total}` : "Пока нет дел на этот день.";
+
+    const list = document.getElementById("tasks");
+    list.innerHTML = "";
+
+    tasks.forEach((t, idx) => {
+      const row = document.createElement("div");
+      row.className = "task";
+
+      const left = document.createElement("div");
+      left.className = "left";
+
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.className = "cb";
+      cb.checked = !!t.done;
+
+      const text = document.createElement("div");
+      text.className = "ttext" + (t.done ? " done" : "");
+      text.textContent = t.text;
+
+      cb.addEventListener("change", () => {
+        t.done = cb.checked;
+        renderTasks();
+        requestSave(selectedDate);
+      });
+
+      const del = document.createElement("button");
+      del.className = "del";
+      del.textContent = "✕";
+      del.addEventListener("click", () => {
+        tasks.splice(idx, 1);
+        renderTasks();
+        requestSave(selectedDate);
+      });
+
+      left.appendChild(cb);
+      left.appendChild(text);
+      row.appendChild(left);
+      row.appendChild(del);
+      list.appendChild(row);
+    });
+  }
+
+  function addTask(){
+    const inp = document.getElementById("taskInput");
+    const text = (inp.value || "").trim();
+    if (!text) return;
+
+    tasks.unshift({ text, done:false });
+    inp.value = "";
+    renderTasks();
+    requestSave(selectedDate);
+  }
+
+  async function rollOverIncomplete(){
+    const move = tasks.filter(t => !t.done).map(t => ({...t, done:false}));
+    if (!move.length) return;
+
+    // Удаляем невыполненные из текущего дня и сохраняем
+    tasks = tasks.filter(t => t.done);
+    renderTasks();
+    requestSave(selectedDate);
+    await getSaveBarrier();
+
+    // Переходим на завтра
+    const tomorrow = addDays(selectedDate, 1);
+    await selectDate(tomorrow);
+
+    // Добавляем переносимые и сохраняем
+    tasks = [...move, ...tasks];
+    renderTasks();
+    requestSave(selectedDate);
+  }
+
+  // ===== Navigation (важно: ждём сохранение перед сменой дня) =====
+  async function selectDate(d){
+    // сначала дождаться, чтобы все изменения старого дня точно ушли
+    await getSaveBarrier();
+
+    selectedDate = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    saveSelectedDate(selectedDate);
+
+    currentMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+    renderCalendar();
+
+    await loadTasksForDate(selectedDate);
+  }
+
+  document.getElementById("prevDayBtn").addEventListener("click", async () => { await selectDate(addDays(selectedDate, -1)); });
+  document.getElementById("nextDayBtn").addEventListener("click", async () => { await selectDate(addDays(selectedDate,  1)); });
+
+  document.getElementById("prevMonthBtn").addEventListener("click", () => { currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth()-1, 1); renderCalendar(); });
+  document.getElementById("nextMonthBtn").addEventListener("click", () => { currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth()+1, 1); renderCalendar(); });
+
+  document.getElementById("addBtn").addEventListener("click", addTask);
+  document.getElementById("taskInput").addEventListener("keydown", (e)=>{ if(e.key==="Enter") addTask(); });
+  document.getElementById("rollBtn").addEventListener("click", rollOverIncomplete);
+
+  // ===== Init =====
+  renderDow();
+  renderCalendar();
+  loadTasksForDate(selectedDate);
+</script>
+</body>
+</html>
