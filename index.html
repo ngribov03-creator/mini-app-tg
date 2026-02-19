@@ -181,8 +181,19 @@ async function pumpSaves(){
   const SUPABASE_URL = "https://uzsbxrzxsdcodhgpnmqy.supabase.co";
   const SUPABASE_ANON_KEY = "sb_publishable_FgHd75xB2-L60TkL6LDvjQ_jms-optq";
   const supa = (window.supabase && window.supabase.createClient)
-    ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-    : null;
+  ? window.supabase.createClient(
+      SUPABASE_URL,
+      SUPABASE_ANON_KEY,
+      {
+        global: {
+          headers: {
+            "x-telegram-id": telegramId
+          }
+        }
+      }
+    )
+  : null;
+
 
   async function api(action, dateISO, tasksArr){
     if (!supa) throw new Error("Supabase client не загрузился (проверь подключение supabase-js)");
